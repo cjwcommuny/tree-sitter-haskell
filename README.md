@@ -1,5 +1,13 @@
 # tree-sitter-haskell
 
+Forked from https://github.com/tree-sitter/tree-sitter-haskell for Nova Haskell extension.
+
+To compile the `dylib`, use:
+
+```shell
+./compile_parser.sh . path/to/Nova.app
+```
+
 [![CI](https://github.com/tree-sitter/tree-sitter-haskell/actions/workflows/ci.yml/badge.svg)](https://github.com/tree-sitter/tree-sitter-haskell/actions/workflows/ci.yml)
 
 Haskell grammar for [tree-sitter].

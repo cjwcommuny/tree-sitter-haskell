@@ -9,3 +9,4 @@ examples/*
 *.o
 *.so
 /.build/
+libtree-sitter-haskell.dylib

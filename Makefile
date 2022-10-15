@@ -1,47 +1,65 @@
-WEB_TREE_SITTER_FILES=README.md package.json tree-sitter-web.d.ts tree-sitter.js tree-sitter.wasm
-TREE_SITTER_VERSION=v0.20.1
+# Repository
+SRC_DIR := src
 
-all: node_modules/web-tree-sitter tree-sitter-haskell.wasm
+PARSER_REPO_URL ?= $(shell git -C $(SRC_DIR) remote get-url origin )
+# the # in the sed pattern has to be escaped or it will be interpreted as a comment
+PARSER_NAME ?= $(shell basename $(PARSER_REPO_URL) | cut -d '-' -f3 | sed 's\#.git\#\#')
+UPPER_PARSER_NAME := $(shell echo $(PARSER_NAME) | tr a-z A-Z )
 
-# build parser.c
-src/parser.c: grammar.js
-	npx tree-sitter generate
+# install directory layout
+PREFIX ?= /usr/local
+INCLUDEDIR ?= $(PREFIX)/include
+LIBDIR ?= $(PREFIX)/lib
 
-# build patched version of web-tree-sitter
-node_modules/web-tree-sitter:
-	@rm -rf tmp/tree-sitter
-	@git clone                                       \
-		-c advice.detachedHead=false --quiet           \
-		--depth=1 --branch=$(TREE_SITTER_VERSION)      \
-		https://github.com/tree-sitter/tree-sitter.git \
-		tmp/tree-sitter
-	@cp tree-sitter.patch tmp/tree-sitter/
-	@>/dev/null                      \
-		&& cd tmp/tree-sitter          \
-		&& git apply tree-sitter.patch \
-		&& ./script/build-wasm --debug
-	@mkdir -p node_modules/web-tree-sitter
-	@cp tmp/tree-sitter/LICENSE node_modules/web-tree-sitter
-	@cp $(addprefix tmp/tree-sitter/lib/binding_web/,$(WEB_TREE_SITTER_FILES)) node_modules/web-tree-sitter
-	@rm -rf tmp/tree-sitter
+# collect sources, and link if necessary
+# Some Tree Sitter grammars include .cc files directly in others,
+# so we shouldn't just wildcard select them all.
+# Only collect known file names.
+ifneq ("$(wildcard $(SRC_DIR)/parser.c)", "")
+	SRC += $(SRC_DIR)/parser.c
+endif
+ifneq ("$(wildcard $(SRC_DIR)/scanner.c)", "")
+	SRC += $(SRC_DIR)/scanner.c
+endif
+ifneq ("$(wildcard $(SRC_DIR)/parser.cc)", "")
+	CPPSRC += $(SRC_DIR)/parser.cc
+endif
+ifneq ("$(wildcard $(SRC_DIR)/scanner.cc)", "")
+	CPPSRC += $(SRC_DIR)/scanner.cc
+endif
 
-# build web version of tree-sitter-haskell
-# NOTE: requires patched version of web-tree-sitter
-tree-sitter-haskell.wasm: src/parser.c src/scanner.c
-	npx tree-sitter build-wasm
+ifeq (, $(CPPSRC))
+	ADDITIONALLIBS := 
+else
+	ADDITIONALLIBS := -lc++
+endif
 
-CC := cc
-OURCFLAGS := -shared -fPIC -g -O0 -I src
+SRC += $(CPPSRC)
+OBJ := $(addsuffix .o,$(basename $(SRC)))
+
+CFLAGS ?= -O3 -Wall -Wextra -I$(SRC_DIR)
+CXXFLAGS ?= -O3 -Wall -Wextra -I$(SRC_DIR)
+override CFLAGS += -std=gnu99 -fPIC
+override CXXFLAGS += -fPIC
+
+LINKSHARED := $(LINKSHARED)-dynamiclib -Wl,
+ifneq ($(ADDITIONALLIBS),)
+  LINKSHARED := $(LINKSHARED)$(ADDITIONALLIBS),
+endif
+LINKSHARED := $(LINKSHARED)-install_name,$(LIBDIR)/libtree-sitter-$(PARSER_NAME).dylib,-rpath,@executable_path/../Frameworks
+
+all: libtree-sitter-$(PARSER_NAME).dylib
+
+libtree-sitter-$(PARSER_NAME).dylib: $(OBJ)
+	$(CC) $(LDFLAGS) $(LINKSHARED) $^ $(LDLIBS) -o $@
+
+install: all
+	install -d '$(DESTDIR)$(LIBDIR)'
+	install -m755 libtree-sitter-$(PARSER_NAME).dylib '$(DESTDIR)$(LIBDIR)'/libtree-sitter-$(PARSER_NAME).dylib
+	install -d '$(DESTDIR)$(INCLUDEDIR)'/tree_sitter
 
 clean:
-	rm -f debug *.o *.a
+	rm -f $(OBJ) libtree-sitter-$(PARSER_NAME).dylib
+	rm -rf build/
 
-debug.so: src/parser.c src/scanner.c
-	$(CC) $(OURCFLAGS) $(CFLAGS) -o parser.o src/parser.c
-	$(CC) $(OURCFLAGS) $(CFLAGS) -o scanner.o src/scanner.c
-	$(CC) $(OURCFLAGS) $(CFLAGS) -o debug.so $(PWD)/scanner.o $(PWD)/parser.o
-	@echo ""
-	@echo "-----------"
-	@echo ""
-	@echo "To use the debug build with tree-sitter on linux, run:"
-	@echo "cp debug.so $HOME/.cache/tree-sitter/lib/haskell.so"
+.PHONY: all install clean
